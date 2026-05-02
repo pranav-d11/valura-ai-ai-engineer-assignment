@@ -2,6 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
+import src.http.app as http_app_module
 from src.http.app import app
 from src.models import AgentName, ClassifierOutput, ExtractedEntities, SafetyCategory
 
@@ -43,7 +44,7 @@ def test_chat_safety_block_sse():
 def test_chat_routes_and_streams_tokens(monkeypatch):
     client = TestClient(app)
 
-    def fake_classify(query, history=None):
+    def fake_classify(query, history=None, **kwargs):
         return ClassifierOutput(
             intent="general_query",
             entities=ExtractedEntities(),
@@ -61,3 +62,30 @@ def test_chat_routes_and_streams_tokens(monkeypatch):
 
     assert any(e.get("type") == "token" and e.get("done") is False for e in events)
     assert any(e.get("type") == "token" and e.get("done") is True for e in events)
+
+
+def test_chat_rate_limit_sse(monkeypatch):
+    monkeypatch.setattr(http_app_module, "RATE_LIMIT_PER_WINDOW", 1)
+    monkeypatch.setattr(http_app_module, "RATE_LIMIT_WINDOW_SECONDS", 60.0)
+    http_app_module._reset_rate_limits_for_tests()
+
+    client = TestClient(app)
+    body = {
+        "user_id": "usr_001",
+        "tenant_id": "t1",
+        "session_id": "sess-rate-1",
+        "query": "hi",
+    }
+    with client.stream("POST", "/chat", json=body) as response:
+        assert response.status_code == 200
+        first = _read_sse_payloads(response)
+    assert first
+
+    body["session_id"] = "sess-rate-2"
+    with client.stream("POST", "/chat", json=body) as response:
+        assert response.status_code == 200
+        second = _read_sse_payloads(response)
+
+    assert second
+    assert second[0]["type"] == "error"
+    assert second[0]["code"] == "rate_limited"

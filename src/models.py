@@ -117,6 +117,7 @@ class ChatRequest(BaseModel):
     user_id: str
     session_id: str
     query: str
+    tenant_id: str | None = None
 
 
 class SessionTurn(BaseModel):

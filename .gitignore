@@ -36,3 +36,6 @@ Thumbs.db
 # Misc
 *.log
 tmp/
+
+# Local interview prep notes (do not commit)
+INTERVIEW_NOTES.md

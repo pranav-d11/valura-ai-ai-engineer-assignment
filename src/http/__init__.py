@@ -1,1 +1,1 @@
-"""HTTP package for Valura AI service."""
+"""HTTP package for Valura service."""

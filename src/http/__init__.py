@@ -1,3 +1,1 @@
-from src.http.app import app
-
-__all__ = ["app"]
+"""HTTP package for Valura AI service."""

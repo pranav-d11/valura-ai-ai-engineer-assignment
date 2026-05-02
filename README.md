@@ -1,81 +1,120 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/SHM9MYZJ)
-# Valura AI — Team Lead Project Assignment
+# Valura AI Microservice
 
-You have been given access to this repository as part of the Valura AI team lead hiring process.
-
-**Read [`ASSIGNMENT.md`](ASSIGNMENT.md) in full before writing a single line of code.**
-
----
-
-## What you're building
-
-An AI agent ecosystem that helps a novice investor **build, monitor, grow, and protect** their portfolio. See [`ASSIGNMENT.md`](ASSIGNMENT.md) for the full mission, scope, and constraints.
-
----
+FastAPI + SSE microservice for Valura's AI co-investor pipeline.
 
 ## Setup
 
-**Requirements:** Python 3.11+, an OpenAI API key.
+- Python `3.11+`
+- Windows (PowerShell):
+  - `py -3.11 -m venv .venv`
+  - `.\.venv\Scripts\activate`
+  - `.\.venv\Scripts\python -m pip install -r requirements.txt`
+- Copy `.env.example` to `.env`
 
-**Persistence is your choice.** Postgres, SQLite, or in-memory — pick one and defend it in your README. `DATABASE_URL` in `.env.example` is optional.
+## Environment Variables
 
-**Streaming is required.** SSE only. Use `sse-starlette`, FastAPI's `StreamingResponse`, or roll your own — your call.
+- `OPENAI_API_KEY`: required only for live LLM-backed classifier mode
+- `OPENAI_MODEL`/`MODEL_NAME`: model selection, default `gpt-4o-mini`
+- `PIPELINE_TIMEOUT_SECONDS`: default `15`
+- `SESSION_MAX_TURNS`: currently enforced as `10` in in-memory session store
 
-```bash
-git clone <your-classroom-repo-url>
-cd <repo-name>
+## Run
 
-python -m venv venv
-source venv/bin/activate        # Linux/macOS
-venv\Scripts\activate           # Windows
+- API: `.\.venv\Scripts\python -m uvicorn src.http.app:app --reload`
+- Tests: `.\.venv\Scripts\python -m pytest tests -v`
 
-pip install -r requirements.txt
+## Architecture
 
-cp .env.example .env
-# Fill in OPENAI_API_KEY
+```text
+POST /chat
+   |
+   v
+[Safety Guard - sync]
+   | blocked? yes --> SSE safety_block and return
+   |
+   no
+   v
+[Session History (in-memory)]
+   |
+   v
+[Classifier - one call / fallback]
+   |
+   v
+[Router]
+   |--> portfolio_health (implemented)
+   |--> all other agents -> stub response
+   |
+   v
+[SSE stream token chunks]
+   |
+   v
+[Persist session turn]
 ```
 
-Use `gpt-4o-mini` while developing to keep costs down. Evaluation runs against `gpt-4.1`.
+## Library Choices
 
----
+- `fastapi`: clean async API framework with strong typing
+- `sse-starlette`: straightforward SSE integration with FastAPI
+- `pydantic v2`: strict contracts for all pipeline payloads
+- `openai`: production SDK for classifier model integration
+- `yfinance`: quick live market data retrieval for portfolio checks
+- `pytest`: fast test loop with fixture-friendly style
 
-## Running Tests
+## Safety Design
 
-```bash
-pytest tests/ -v
-```
+- Guard runs before classifier (blocking authority)
+- Category-based phrase matching for:
+  - insider trading
+  - market manipulation
+  - money laundering
+  - guaranteed returns
+  - reckless advice
+  - sanctions evasion / fraud patterns
+- Educational framing is intentionally passed through (e.g., "what is insider trading?")
+- Distinct refusal message per blocked category
 
-Tests must pass without an `OPENAI_API_KEY` set — mock the LLM. We will run `pytest tests/ -v` on your repo.
+## Session Memory Tradeoff
 
----
+- Current implementation uses in-memory dictionary store keyed by `session_id`
+- Why now: fastest implementation path, no infra needed for assignment runtime
+- Production upgrade path:
+  - Redis for horizontal scale and low latency
+  - Postgres for durable audit/history requirements
+- Store interface is intentionally thin, so backend swap is localized
 
-## Repository Structure
+## Timeout Rationale
 
-When you submit, your repository must contain:
+- Pipeline timeout: `15s`
+- Rationale: long enough for classifier + market calls under normal network jitter, short enough to avoid stalled client connections and runaway cost
 
-```
-README.md   ← overwrite this with your own (setup, decisions, library choices, video link)
-src/        ← all code
-tests/      ← all tests, must pass with pytest
-```
+## Latency Measurement Plan
 
-`fixtures/`, `pytest.ini`, `requirements.txt`, `.env.example`, and `.github/` are part of the scaffold — leave them in place. Do not delete `ASSIGNMENT.md`.
+- Method:
+  - wrap `time.perf_counter()` around pipeline phases
+  - record first-token latency and end-to-end completion
+  - run 20 requests, report p95
+- Status: placeholder section; final measured numbers will be filled before submission
 
----
+## Cost Measurement Plan
 
-## Submission
+- Log prompt/completion token counts from classifier calls
+- Estimate per-query cost using published model rates
+- Report observed `gpt-4o-mini` cost and estimated `gpt-4.1` cost
 
-- Push commits **throughout** your work — we read the git log
-- Your `README.md` must:
-  - Explain how to run your code
-  - List every required environment variable
-  - Document the non-obvious decisions you made
-  - Link your defence video (≤ 10 min — see `ASSIGNMENT.md`)
-- Deadline: **3 days** from the date you accepted this assignment
-- Defence video: due within **24 hours** of your final commit
+## Performance Targets
 
----
+- p95 first token `< 2s` (target)
+- p95 end-to-end `< 6s` (target)
+- estimated per-query cost at `gpt-4.1` `< $0.05` (target)
 
-## Environment
+## What I Would Do With More Time
 
-You self-host everything. We do not provide credentials. See `.env.example` for the variables you'll need.
+- Replace in-memory sessions with Postgres-backed session memory
+- Add embedding-based pre-classifier to reduce unnecessary LLM calls
+- Per-tenant model routing (cost/performance tiering)
+- Better observability (structured logs, trace ids, latency breakdown by stage)
+- Stronger normalization and follow-up coreference for classifier entities
+
+## Video Link
+
+- TODO: add unlisted defence video URL

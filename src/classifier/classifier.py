@@ -129,9 +129,11 @@ def _extract_entities(query: str) -> ExtractedEntities:
 
 def _heuristic_agent(query: str) -> AgentName:
     q = query.lower()
+    if any(k in q for k in ["how is my portfolio doing", "health check", "concentration risk", "portfolio summary"]):
+        return AgentName.PORTFOLIO_HEALTH
     if any(k in q for k in ["predict", "where will", "forecast"]):
         return AgentName.PREDICTIVE_ANALYSIS
-    if any(k in q for k in ["risk", "beta", "drawdown", "stress test", "exposed"]):
+    if any(k in q for k in ["beta", "drawdown", "stress test", "exposed", "downside risk"]):
         return AgentName.RISK_ASSESSMENT
     if any(k in q for k in ["retire", "retirement", "college fund", "save for a house", "fire plan"]):
         return AgentName.FINANCIAL_PLANNING
@@ -139,7 +141,9 @@ def _heuristic_agent(query: str) -> AgentName:
         return AgentName.PRODUCT_RECOMMENDATION
     if any(k in q for k in ["calculate", "future value", "convert", "mortgage", "what will i have", "tax", "capital gains"]):
         return AgentName.FINANCIAL_CALCULATOR
-    if any(k in q for k in ["price", "news", "markets today", "compare", "tell me about", "how is the ftse", "nikkei", "top gainers", "how is ", "eur/usd"]):
+    if any(k in q for k in ["price", "news", "markets today", "compare", "tell me about", "how is the ftse", "nikkei", "top gainers", "eur/usd", "the markets"]):
+        return AgentName.MARKET_RESEARCH
+    if "how is " in q and any(k in q for k in ["tesla", "apple", "nvidia", "asml", "ftse", "nikkei"]):
         return AgentName.MARKET_RESEARCH
     if any(k in q for k in ["should i", "rebalance", "good time to invest", "equity-bond split", "hedge"]):
         return AgentName.INVESTMENT_STRATEGY
@@ -148,7 +152,7 @@ def _heuristic_agent(query: str) -> AgentName:
     if any(k in q for k in ["portfolio", "diversified", "concentration risk", "am i beating the market", "health check", "holdings"]):
         return AgentName.PORTFOLIO_HEALTH
     stripped = query.strip()
-    if re.fullmatch(r"[A-Za-z]{1,5}(?:\.[A-Za-z]{1,3})?", stripped) and any(ch.isupper() for ch in stripped):
+    if re.fullmatch(r"[A-Za-z]{1,5}(?:\.[A-Za-z]{1,3})?", stripped) and ("." in stripped or any(ch.isupper() for ch in stripped)):
         return AgentName.MARKET_RESEARCH
     return AgentName.GENERAL_QUERY
 

@@ -31,9 +31,13 @@ except Exception:  # pragma: no cover
     OpenAI = None
 
 try:
-    import google.generativeai as genai
+    import google.genai as genai
 except Exception:  # pragma: no cover
-    genai = None
+    try:
+        # Fallback to deprecated package for compatibility
+        import google.generativeai as genai
+    except Exception:
+        genai = None
 
 try:
     TENANT_MODEL_OVERRIDES = json.loads(TENANT_MODEL_OVERRIDES_RAW)

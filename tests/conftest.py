@@ -63,6 +63,17 @@ def conversation_test_cases():
 # LLM mocking
 # ---------------------------------------------------------------------------
 
+def _create_mock_llm_response(query: str, expected_agent: str, entities: dict | None = None) -> dict:
+    """Create a proper LLM response structure for the classifier."""
+    return {
+        "intent": f"{expected_agent}_query",
+        "entities": entities or {},
+        "target_agent": expected_agent,
+        "safety_verdict": "clean",
+        "confidence": 0.95,
+    }
+
+
 @pytest.fixture
 def mock_llm():
     """
@@ -75,3 +86,31 @@ def mock_llm():
             ...
     """
     return MagicMock()
+
+
+@pytest.fixture
+def configured_mock_llm(gold_classifier_queries):
+    """
+    Returns a mock LLM that is pre-configured to return correct responses
+    for all queries in the gold dataset. This tests the LLM integration path
+    (not the heuristic fallback).
+    """
+    # Build a map of query -> expected response
+    query_to_response = {}
+    for case in gold_classifier_queries:
+        query = case["query"]
+        expected_agent = case["expected_agent"]
+        entities = case.get("expected_entities", {})
+        query_to_response[query.lower().strip()] = _create_mock_llm_response(
+            query, expected_agent, entities
+        )
+
+    def mock_call(query: str, history: list | None = None) -> dict:
+        # Look up the response by normalized query
+        normalized = query.lower().strip()
+        if normalized in query_to_response:
+            return query_to_response[normalized]
+        # Default fallback
+        return _create_mock_llm_response(query, "general_query", {})
+
+    return mock_call

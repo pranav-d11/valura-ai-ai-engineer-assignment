@@ -12,6 +12,12 @@ MODEL_DEV = "gpt-4o-mini"
 MODEL_EVAL = "gpt-4.1"
 MODEL_NAME = os.getenv("MODEL_NAME", os.getenv("OPENAI_MODEL", MODEL_DEV))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+OPENROUTER_MINIMAX_MODEL = os.getenv("OPENROUTER_MINIMAX_MODEL", "minimax/minimax-m2.5:free")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 CACHE_TTL_SECONDS = int(os.getenv("CLASSIFIER_CACHE_TTL_SECONDS", "600"))
 CACHE_MAX_ITEMS = int(os.getenv("CLASSIFIER_CACHE_MAX_ITEMS", "500"))
 TENANT_MODEL_OVERRIDES_RAW = os.getenv("TENANT_MODEL_OVERRIDES", "{}")
@@ -23,6 +29,11 @@ try:
     from openai import OpenAI
 except Exception:  # pragma: no cover
     OpenAI = None
+
+try:
+    import google.generativeai as genai
+except Exception:  # pragma: no cover
+    genai = None
 
 try:
     TENANT_MODEL_OVERRIDES = json.loads(TENANT_MODEL_OVERRIDES_RAW)
@@ -65,6 +76,10 @@ TICKER_SYNONYMS = {
     "hsbc": "HSBA.L",
     "nikkei": "NIKKEI 225",
 }
+
+
+def _has_any(text: str, terms: list[str]) -> bool:
+    return any(term in text for term in terms)
 
 
 def _extract_tickers_from_text(text: str) -> list[str]:
@@ -327,27 +342,141 @@ def _build_user_prompt(query: str, history: list[SessionTurn] | None) -> str:
     return query
 
 
-def _classify_with_openai(query: str, history: list[SessionTurn] | None, tenant_id: str | None = None) -> ClassifierOutput:
-    if OpenAI is None or not OPENAI_API_KEY:
+def _classify_with_openrouter(query: str, history: list[SessionTurn] | None, model: str) -> ClassifierOutput:
+    if OpenAI is None or not OPENROUTER_API_KEY:
         return _fallback_from_heuristics(query)
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    try:
+        user_prompt = _build_user_prompt(query, history)
+        
+        client = OpenAI(
+            base_url=OPENROUTER_BASE_URL,
+            api_key=OPENROUTER_API_KEY,
+        )
+        
+        completion = client.chat.completions.create(
+            model=model,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        content = completion.choices[0].message.content or "{}"
+        
+        payload = json.loads(content)
+        
+        # Handle entities with type conversions for LLM output
+        raw_entities = payload.get("entities", {}) or {}
+        
+        # Convert float period_years to int if present
+        if "period_years" in raw_entities and raw_entities["period_years"] is not None:
+            try:
+                raw_entities["period_years"] = int(float(raw_entities["period_years"]))
+            except (ValueError, TypeError):
+                raw_entities["period_years"] = None
+        
+        return ClassifierOutput(
+            intent=payload.get("intent", "unknown"),
+            entities=ExtractedEntities(**raw_entities),
+            target_agent=AgentName(payload.get("target_agent", "general_query")),
+            safety_verdict=SafetyCategory(payload.get("safety_verdict", "clean")),
+            confidence=float(payload.get("confidence", 0.0)),
+        )
+    except Exception:
+        return _fallback_from_heuristics(query)
+
+
+def _classify_with_gemini(query: str, history: list[SessionTurn] | None, tenant_id: str | None = None) -> ClassifierOutput:
+    if genai is None or not GEMINI_API_KEY:
+        return _fallback_from_heuristics(query)
+
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        
+        user_prompt = _build_user_prompt(query, history)
+        full_prompt = f"{SYSTEM_PROMPT}\n\nUser query: {user_prompt}"
+        
+        # Configure for JSON output
+        generation_config = {
+            "temperature": 0,
+            "response_mime_type": "application/json",
+        }
+        
+        response = model.generate_content(
+            full_prompt,
+            generation_config=generation_config
+        )
+        
+        content = response.text
+        payload = json.loads(content)
+        
+        # Handle entities with type conversions for LLM output
+        raw_entities = payload.get("entities", {}) or {}
+        
+        # Convert float period_years to int if present
+        if "period_years" in raw_entities and raw_entities["period_years"] is not None:
+            try:
+                raw_entities["period_years"] = int(float(raw_entities["period_years"]))
+            except (ValueError, TypeError):
+                raw_entities["period_years"] = None
+        
+        return ClassifierOutput(
+            intent=payload.get("intent", "unknown"),
+            entities=ExtractedEntities(**raw_entities),
+            target_agent=AgentName(payload.get("target_agent", "general_query")),
+            safety_verdict=SafetyCategory(payload.get("safety_verdict", "clean")),
+            confidence=float(payload.get("confidence", 0.0)),
+        )
+    except Exception:
+        return _fallback_from_heuristics(query)
+
+
+def _classify_with_openai(query: str, history: list[SessionTurn] | None, tenant_id: str | None = None) -> ClassifierOutput:
     user_prompt = _build_user_prompt(query, history)
 
-    completion = client.chat.completions.create(
-        model=_resolve_model_for_tenant(tenant_id),
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-    )
-    content = completion.choices[0].message.content or "{}"
+    # Determine which provider to use
+    if GEMINI_API_KEY and genai:
+        # Try Gemini first (free tier)
+        return _classify_with_gemini(query, history, tenant_id)
+    elif OPENROUTER_API_KEY and OpenAI:
+        # Try OpenRouter with MiniMax free model second
+        return _classify_with_openrouter(query, history, model=OPENROUTER_MINIMAX_MODEL)
+    elif OPENAI_API_KEY and OpenAI:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        model = _resolve_model_for_tenant(tenant_id)
+        completion = client.chat.completions.create(
+            model=model,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        content = completion.choices[0].message.content or "{}"
+    elif OPENROUTER_API_KEY and OpenAI:
+        # Use OpenRouter as fallback provider
+        return _classify_with_openrouter(query, history, model=OPENROUTER_MODEL)
+    else:
+        return _fallback_from_heuristics(query)
+
     payload = json.loads(content)
+    
+    # Handle entities with type conversions for LLM output
+    raw_entities = payload.get("entities", {}) or {}
+    
+    # Convert float period_years to int if present
+    if "period_years" in raw_entities and raw_entities["period_years"] is not None:
+        try:
+            raw_entities["period_years"] = int(float(raw_entities["period_years"]))
+        except (ValueError, TypeError):
+            raw_entities["period_years"] = None
+    
     return ClassifierOutput(
         intent=payload.get("intent", "unknown"),
-        entities=ExtractedEntities(**payload.get("entities", {})),
+        entities=ExtractedEntities(**raw_entities),
         target_agent=AgentName(payload.get("target_agent", "general_query")),
         safety_verdict=SafetyCategory(payload.get("safety_verdict", "clean")),
         confidence=float(payload.get("confidence", 0.0)),
@@ -384,7 +513,7 @@ def classify(
             entities = _extract_entities(query, history=history)
             agent = _heuristic_agent(query, history=history)
             h_conf = _heuristic_confidence(agent, query, history)
-            if PRE_CLASSIFIER_MIN_CONFIDENCE > 0 and h_conf >= PRE_CLASSIFIER_MIN_CONFIDENCE and OPENAI_API_KEY:
+            if PRE_CLASSIFIER_MIN_CONFIDENCE > 0 and h_conf >= PRE_CLASSIFIER_MIN_CONFIDENCE and (OPENAI_API_KEY or GEMINI_API_KEY or OPENROUTER_API_KEY):
                 result = ClassifierOutput(
                     intent=_intent_for_agent(agent),
                     entities=entities,
@@ -394,7 +523,7 @@ def classify(
                 )
                 _cache_set(session_id, query, result)
                 return result
-            if OpenAI is None or not OPENAI_API_KEY:
+            if (OpenAI is None or not OPENAI_API_KEY) and (genai is None or not GEMINI_API_KEY) and not OPENROUTER_API_KEY:
                 result = ClassifierOutput(
                     intent=_intent_for_agent(agent),
                     entities=entities,

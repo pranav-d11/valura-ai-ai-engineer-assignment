@@ -14,12 +14,24 @@ safety guard -> classifier -> router -> portfolio health/stub agents -> SSE stre
    - `.\.venv\Scripts\python -m pip install -r requirements.txt`
 4. Configure environment:
    - `Copy-Item .env.example .env`
-   - Fill `OPENAI_API_KEY` only if you want live classifier LLM calls.
+   - Fill API keys for LLM provider of choice:
+     - `GEMINI_API_KEY` for free Gemini models (recommended)
+     - `OPENROUTER_API_KEY` for OpenRouter models (includes free MiniMax)
+     - `OPENAI_API_KEY` for OpenAI models (paid) 
 
 ## Environment Variables
 
+### LLM Provider Configuration
 - `OPENAI_API_KEY`: optional for local tests; required for live OpenAI classifier path.
 - `OPENAI_MODEL` / `MODEL_NAME`: classifier model override, default `gpt-4o-mini`.
+- `GEMINI_API_KEY`: Google Generative AI API key for Gemini models (free tier available).
+- `GEMINI_MODEL`: Gemini model to use, default `gemini-2.5-flash`. Alternative: `gemini-2.5-flash-lite` for even more cost-effective processing.
+- `OPENROUTER_API_KEY`: optional OpenRouter API key for alternative model access.
+- `OPENROUTER_BASE_URL`: OpenRouter base URL, default `https://openrouter.ai/api/v1`.
+- `OPENROUTER_MODEL`: OpenRouter model, default `openai/gpt-4o-mini`.
+- `OPENROUTER_MINIMAX_MODEL`: MiniMax model through OpenRouter, default `minimax/minimax-m2.5:free` (free tier).
+
+### Application Configuration
 - `PIPELINE_TIMEOUT_SECONDS`: total `/chat` pipeline timeout, default `15`.
 - `SESSION_MAX_TURNS`: documented cap, currently enforced as 10 in `src/memory/session.py`.
 - `TENANT_MODEL_OVERRIDES`: JSON map of `tenant_id -> model` for per-tenant routing (stretch).
@@ -27,6 +39,14 @@ safety guard -> classifier -> router -> portfolio health/stub agents -> SSE stre
 - `CLASSIFIER_CACHE_TTL_SECONDS` / `CLASSIFIER_CACHE_MAX_ITEMS`: intra-session identical-query classifier cache (stretch).
 - `PRE_CLASSIFIER_MIN_CONFIDENCE`: heuristic fast-path threshold; set `0` to disable LLM skipping (stretch).
 - `RATE_LIMIT_PER_WINDOW` / `RATE_LIMIT_WINDOW_SECONDS`: optional `/chat` rate limit (stretch); `0` disables.
+
+### LLM Provider Priority
+The classifier automatically selects providers in this order:
+1. **Gemini API** (if `GEMINI_API_KEY` is set) - Free tier available
+2. **OpenRouter MiniMax** (if `OPENROUTER_API_KEY` is set) - Free tier available
+3. **OpenAI API** (if `OPENAI_API_KEY` is set) - Paid
+4. **OpenRouter fallback** (if `OPENROUTER_API_KEY` is set) - Paid
+5. **Heuristic fallback** (no API key required) - Deterministic rules
 
 ## Run
 
@@ -73,7 +93,8 @@ POST /chat
 - `fastapi`: typed async web layer and simple dependency wiring.
 - `sse-starlette`: explicit SSE event streaming with minimal ceremony.
 - `pydantic v2`: strict request/response contracts and schema safety.
-- `openai`: official SDK for single-call structured classifier path.
+- `openai`: official SDK for OpenAI API integration.
+- `google-generativeai`: official SDK for Google Gemini API integration (free tier).
 - `yfinance`: live market prices for portfolio-health computations.
 - `pytest` (+ async/mock plugins): deterministic, CI-friendly validation.
 
@@ -124,8 +145,13 @@ Note:
 ## Cost Measurement
 
 Development mode:
-- Default model: `gpt-4o-mini`.
+- Default model: `gemini-2.5-flash` (free tier) or `gpt-4o-mini` (OpenAI).
 - Tests/CI run with mocked/no-key path, so measured local classifier API cost is `~$0`.
+
+### Free Tier Options
+- **Gemini 2.5 Flash**: Free tier available with generous limits for development and small projects
+- **Gemini 2.5 Flash-Lite**: Even more cost-effective free option for high-volume, low-complexity tasks
+- **MiniMax M2.5 (via OpenRouter)**: Free tier SOTA model with excellent reasoning and coding capabilities
 
 Evaluation model target:
 - `gpt-4.1` (per assignment).
@@ -134,7 +160,7 @@ Evaluation model target:
   - compute `input_tokens * input_rate + output_tokens * output_rate`,
   - aggregate per-query.
 
-Based on expected classifier prompt sizes, estimated cost remains under `$0.05/query`.
+Based on expected classifier prompt sizes, estimated cost remains under `$0.05/query` with paid models, or `$0` with Gemini free tier.
 
 ## Performance Targets (Assignment Alignment)
 
@@ -171,4 +197,4 @@ Current result:
 
 ## Defence Video Link
 
-- TODO: add unlisted YouTube link (<= 10 minutes) before final submission.
+- (https://drive.google.com/file/d/10WLlCXi_O-9HUkZ2vlS72nsmkvLwOAKP/view?usp=sharing)

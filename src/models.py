@@ -47,7 +47,7 @@ class SafetyResult(BaseModel):
 
 
 class ExtractedEntities(BaseModel):
-    tickers: list[str] = Field(default_factory=list)
+    tickers: list[str] | None = None
     amount: float | None = None
     currency: str | None = None
     rate: float | None = None
@@ -55,11 +55,20 @@ class ExtractedEntities(BaseModel):
     frequency: str | None = None
     horizon: str | None = None
     time_period: str | None = None
-    topics: list[str] = Field(default_factory=list)
-    sectors: list[str] = Field(default_factory=list)
+    topics: list[str] | None = None
+    sectors: list[str] | None = None
     index: str | None = None
     action: str | None = None
     goal: str | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        """Ensure list fields are never None after validation."""
+        if self.tickers is None:
+            self.tickers = []
+        if self.topics is None:
+            self.topics = []
+        if self.sectors is None:
+            self.sectors = []
 
 
 class ClassifierOutput(BaseModel):
